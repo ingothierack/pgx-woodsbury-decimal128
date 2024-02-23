@@ -1,62 +1,291 @@
-package decimal
+package decimal_test
 
 import (
-	"math/big"
+	"context"
+	"math"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"log"
+
+	pgxdecimal "github.com/ingothierack/pgx-woodsbury-decimal128"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxtest"
+	"github.com/stretchr/testify/require"
 	"github.com/woodsbury/decimal128"
 )
 
-func TestConvertDecimal128(t *testing.T) {
-	test_int64 := "-978901234567890123456789"
-	var test_pgnumeric *pgtype.Numeric
-	var test_bigint big.Int
+var defaultConnTestRunner pgxtest.ConnTestRunner
 
-	test_bigint.SetString(test_int64, 10)
-
-	test, _ := new(big.Int).SetString("978901234567890123456789", 10)
-
-	test_pgnumeric = &pgtype.Numeric{
-		Valid: true,
-		Int:   test,
-		Exp:   -9,
+func init() {
+	defaultConnTestRunner = pgxtest.DefaultConnTestRunner()
+	defaultConnTestRunner.AfterConnect = func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxdecimal.Register(conn.TypeMap())
 	}
-
-	var dec decimal128.Decimal
-	dec, _ = decimal128.Parse("-978_901_234_567_890.123_456_789")
-
-	var dec1 decimal128.Decimal
-	dec1, _ = decimal128.Parse("978_901_234_567_890.123_456_789")
-
-	var dec2 decimal128.Decimal
-	dec2.Compose(0, false, test_bigint.Bytes(), test_pgnumeric.Exp)
-
-	var dec3 decimal128.Decimal
-	testneg := false
-	if test_pgnumeric.Int.Sign() < 0 {
-		testneg = true
+	defaultConnTestRunner.CreateConfig = func(ctx context.Context, t testing.TB) *pgx.ConnConfig {
+		config, err := pgx.ParseConfig("host=127.0.0.1 database=postgres user=postgres password=postgres")
+		// config, err := pgx.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		return config
 	}
-	dec3.Compose(0, testneg, test_pgnumeric.Int.Bytes(), test_pgnumeric.Exp)
+	log.Println("init complete")
+}
 
-	var intvar *big.Int
-	var exp int32
+func TestCodecDecodeValue(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		original := decimal128.MustParse("1.234")
 
-	intvar = dec3.Int(intvar)
-	testdec := decimal128.Exp(dec3)
+		rows, err := conn.Query(context.Background(), `select $1::numeric`, original)
+		require.NoError(t, err)
 
-	temp1, _ := test_pgnumeric.Float64Value()
-	t.Logf("pgtype numeric: %v\n", test_pgnumeric)
-	t.Logf("pgtype numeric: %v\n", temp1)
-	t.Logf("decimal dec: %v\n", dec.String())
-	t.Logf("decimal dec: %-20.10f\n", dec)
-	t.Logf("decimal dec1: %v\n", dec1.String())
-	t.Logf("decimal dec: %-20.10f\n", dec1)
-	t.Logf("decimal dec2: %v\n", dec2.String())
-	t.Logf("decimal dec: %-20.10f\n", dec2)
-	t.Logf("decimal dec3: %-20.10f\n", dec3)
-	t.Logf("decimal testdec: %v\n", testdec)
+		for rows.Next() {
+			values, err := rows.Values()
+			require.NoError(t, err)
 
-	t.Logf("bigintval: %v, exp: %v", intvar, exp)
+			require.Len(t, values, 1)
+			v0, ok := values[0].(decimal128.Decimal)
+			require.True(t, ok)
+			require.Equal(t, original, v0)
+		}
 
+		require.NoError(t, rows.Err())
+
+		rows, err = conn.Query(context.Background(), `select $1::numeric`, nil)
+		require.NoError(t, err)
+
+		for rows.Next() {
+			values, err := rows.Values()
+			require.NoError(t, err)
+
+			require.Len(t, values, 1)
+			require.Equal(t, nil, values[0])
+		}
+
+		require.NoError(t, rows.Err())
+	})
+}
+
+func TestNaN(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		var d decimal128.Decimal
+		err := conn.QueryRow(context.Background(), `select 'NaN'::numeric`).Scan(&d)
+		require.EqualError(t, err, `can't scan into dest[0]: cannot scan NaN into *decimal128.Decimal`)
+	})
+}
+
+func TestArray(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		inputSlice := []decimal128.Decimal{}
+
+		for i := 0; i < 10; i++ {
+			d := decimal128.FromInt64(int64(i))
+			inputSlice = append(inputSlice, d)
+		}
+
+		var outputSlice []decimal128.Decimal
+		err := conn.QueryRow(context.Background(), `select $1::numeric[]`, inputSlice).Scan(&outputSlice)
+		require.NoError(t, err)
+
+		require.Equal(t, len(inputSlice), len(outputSlice))
+		for i := 0; i < len(inputSlice); i++ {
+			require.True(t, outputSlice[i].Equal(inputSlice[i]))
+		}
+	})
+}
+
+func isExpectedEqDecimal(a decimal128.Decimal) func(interface{}) bool {
+	return func(v interface{}) bool {
+		return a.Equal(v.(decimal128.Decimal))
+	}
+}
+
+func isExpectedEqNullDecimal(a pgxdecimal.NullDecimal) func(interface{}) bool {
+	return func(v interface{}) bool {
+		b := v.(pgxdecimal.NullDecimal)
+		return a.Valid == b.Valid && a.Decimal.Equal(b.Decimal)
+	}
+}
+
+func TestValueRoundTrip(t *testing.T) {
+	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, nil, "numeric", []pgxtest.ValueRoundTripTest{
+		{
+			Param:  decimal128.MustParse("1"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("1")),
+		},
+		{
+			Param:  decimal128.MustParse("0.000012345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("0.000012345")),
+		},
+		{
+			Param:  decimal128.MustParse("123456.123456"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("123456.123456")),
+		},
+		{
+			Param:  decimal128.MustParse("-1"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-1")),
+		},
+		{
+			Param:  decimal128.MustParse("-0.000012345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-0.000012345")),
+		},
+		{
+			Param:  decimal128.MustParse("-123456.123456"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-123456.123456")),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("1"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("1"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("0.000012345"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("0.000012345"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("123456.123456"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("123456.123456"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-1"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-1"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-0.000012345"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-0.000012345"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true}),
+		},
+	})
+}
+
+func TestValueRoundTripFloat8(t *testing.T) {
+	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, nil, "float8", []pgxtest.ValueRoundTripTest{
+		{
+			Param:  decimal128.MustParse("1"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("1")),
+		},
+		{
+			Param:  decimal128.MustParse("0.000012345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("0.000012345")),
+		},
+		{
+			Param:  decimal128.MustParse("123456.123456"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("123456.123456")),
+		},
+		{
+			Param:  decimal128.MustParse("-1"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-1")),
+		},
+		{
+			Param:  decimal128.MustParse("-0.000012345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-0.000012345")),
+		},
+		{
+			Param:  decimal128.MustParse("-123456.123456"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("-123456.123456")),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("1"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("1"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("0.000012345"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("0.000012345"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("123456.123456"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("123456.123456"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-1"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-1"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-0.000012345"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-0.000012345"), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true}),
+		},
+	})
+}
+
+func TestValueRoundTripInt8(t *testing.T) {
+	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, nil, "int8", []pgxtest.ValueRoundTripTest{
+		{
+			Param:  decimal128.FromInt64(0),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.FromInt64(0)),
+		},
+		{
+			Param:  decimal128.FromInt64(1),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.FromInt64(1)),
+		},
+		{
+			Param:  decimal128.FromInt64(math.MaxInt64),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.FromInt64(math.MaxInt64)),
+		},
+		{
+			Param:  decimal128.FromInt64(-1),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.FromInt64(-1)),
+		},
+		{
+			Param:  decimal128.FromInt64(math.MinInt64),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.FromInt64(math.MinInt64)),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(0), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(0), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(1), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(1), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(math.MaxInt64), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(math.MaxInt64), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(-1), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(-1), Valid: true}),
+		},
+		{
+			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(math.MinInt64), Valid: true},
+			Result: new(pgxdecimal.NullDecimal),
+			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.FromInt64(math.MinInt64), Valid: true}),
+		},
+	})
 }

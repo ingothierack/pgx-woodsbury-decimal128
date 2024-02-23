@@ -43,8 +43,28 @@ func (d *Decimal) ScanNumeric(v pgtype.Numeric) error {
 }
 
 func (d Decimal) NumericValue() (pgtype.Numeric, error) {
+	var nan bool
+	var inf pgtype.InfinityModifier
+
 	dd := decimal128.Decimal(d)
-	_, sign, value, exp := dd.Decompose(nil)
+	modifier, sign, value, exp := dd.Decompose(nil)
+
+	switch modifier {
+	case 0:
+		inf = pgtype.Finite
+		nan = false
+	case 1:
+		inf = pgtype.Infinity
+		nan = false
+	case 2:
+		if sign {
+			inf = pgtype.NegativeInfinity
+		}
+		nan = false
+	default:
+		inf = pgtype.Finite
+		nan = false
+	}
 
 	z := new(big.Int)
 	if sign {
@@ -53,7 +73,8 @@ func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 	} else {
 		z.SetBytes(value)
 	}
-	return pgtype.Numeric{Int: z, Exp: exp, Valid: true}, nil
+
+	return pgtype.Numeric{Int: z, Exp: exp, Valid: true, NaN: nan, InfinityModifier: inf}, nil
 }
 
 func (d *Decimal) ScanFloat64(v pgtype.Float8) error {
@@ -72,14 +93,18 @@ func (d *Decimal) ScanFloat64(v pgtype.Float8) error {
 	return nil
 }
 
+func (d Decimal) Float64Value() (pgtype.Float8, error) {
+	dd := decimal128.Decimal(d)
+	return pgtype.Float8{Float64: dd.Float64(), Valid: true}, nil
+}
+
 func (d Decimal) Int64Value() (pgtype.Int8, error) {
 	dd := decimal128.Decimal(d)
-	// buf := make([]byte, 1024)
-
-	// form, sign, value, exp := dd.Decompose(buf)
+	if dd.IsNaN() {
+		return pgtype.Int8{Int64: 0, Valid: false}, nil
+	}
 
 	valint64, valid := dd.Int64()
-
 	if !valid {
 		return pgtype.Int8{}, fmt.Errorf("cannot convert %v to int64", dd)
 	}
