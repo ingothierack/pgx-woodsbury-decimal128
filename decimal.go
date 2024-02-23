@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/ingothierack/decimal128"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/woodsbury/decimal128"
 )
 
 type Decimal decimal128.Decimal

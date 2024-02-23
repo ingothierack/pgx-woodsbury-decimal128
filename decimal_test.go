@@ -9,11 +9,11 @@ import (
 
 	"log"
 
+	"github.com/ingothierack/decimal128"
 	pgxdecimal "github.com/ingothierack/pgx-woodsbury-decimal128"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxtest"
 	"github.com/stretchr/testify/require"
-	"github.com/woodsbury/decimal128"
 )
 
 var defaultConnTestRunner pgxtest.ConnTestRunner
