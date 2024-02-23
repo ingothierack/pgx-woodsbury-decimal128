@@ -3,6 +3,8 @@ package decimal_test
 import (
 	"context"
 	"math"
+	"os"
+	"strings"
 	"testing"
 
 	"log"
@@ -22,8 +24,7 @@ func init() {
 		pgxdecimal.Register(conn.TypeMap())
 	}
 	defaultConnTestRunner.CreateConfig = func(ctx context.Context, t testing.TB) *pgx.ConnConfig {
-		config, err := pgx.ParseConfig("host=127.0.0.1 database=postgres user=postgres password=postgres")
-		// config, err := pgx.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		config, err := pgx.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
 		require.NoError(t, err)
 		return config
 	}
@@ -98,6 +99,17 @@ func isExpectedEqDecimal(a decimal128.Decimal) func(interface{}) bool {
 	}
 }
 
+func isExpectedEqString(a string) func(interface{}) bool {
+	return func(v interface{}) bool {
+		val := v.(decimal128.Decimal).String()
+		ret := strings.Compare(a, val)
+		if ret == 0 {
+			return true
+		}
+		return false
+	}
+}
+
 func isExpectedEqNullDecimal(a pgxdecimal.NullDecimal) func(interface{}) bool {
 	return func(v interface{}) bool {
 		b := v.(pgxdecimal.NullDecimal)
@@ -166,6 +178,41 @@ func TestValueRoundTrip(t *testing.T) {
 			Param:  pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true},
 			Result: new(pgxdecimal.NullDecimal),
 			Test:   isExpectedEqNullDecimal(pgxdecimal.NullDecimal{Decimal: decimal128.MustParse("-123456.123456"), Valid: true}),
+		},
+	})
+}
+
+func TestValueRoundTripNumeric(t *testing.T) {
+	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, nil, "numeric", []pgxtest.ValueRoundTripTest{
+		{
+			Param:  decimal128.MustParse("1"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("1")),
+		},
+		{
+			Param:  decimal128.MustParse("123456789012345.123456789012"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("123456789012345.123456789012")),
+		},
+		{
+			Param:  decimal128.MustParse("12345678901234567890.12345678901234567890"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqDecimal(decimal128.MustParse("12345678901234567890.12345678901234567890")),
+		},
+		// {
+		// 	Param:  decimal128.MustParse("1234567890123456789012345678901234567890.1234567890123456789012345678901234567890"),
+		// 	Result: new(decimal128.Decimal),
+		// 	Test:   isExpectedEqString("1.2345678901234567890123456789012345678901234567890123456789012345678901234567890e+39"),
+		// },
+		{
+			Param:  decimal128.MustParse("9_345_678_901_234_567_890.123_456_789_012_345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqString("9.345678901234567890123456789012345e+18"),
+		},
+		{
+			Param:  decimal128.MustParse("-9_345_678_901_234_567_890.123_456_789_012_345"),
+			Result: new(decimal128.Decimal),
+			Test:   isExpectedEqString("-9.345678901234567890123456789012345e+18"),
 		},
 	})
 }

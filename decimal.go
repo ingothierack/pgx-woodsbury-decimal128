@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/woodsbury/decimal128"
@@ -89,13 +90,25 @@ func (d *Decimal) ScanFloat64(v pgtype.Float8) error {
 	if math.IsInf(v.Float64, 0) {
 		return fmt.Errorf("cannot scan %v into *decimal.Decimal", v.Float64)
 	}
-	*d = Decimal(decimal128.FromFloat64(v.Float64))
+	s := strconv.FormatFloat(v.Float64, 'f', -1, 64)
+	*d = Decimal(decimal128.MustParse(s))
 	return nil
 }
 
 func (d Decimal) Float64Value() (pgtype.Float8, error) {
 	dd := decimal128.Decimal(d)
 	return pgtype.Float8{Float64: dd.Float64(), Valid: true}, nil
+}
+
+func (d *Decimal) ScanInt64(v pgtype.Int8) error {
+	if !v.Valid {
+		*d = Decimal{}
+		return nil
+	}
+
+	*d = Decimal(decimal128.FromInt64(v.Int64))
+
+	return nil
 }
 
 func (d Decimal) Int64Value() (pgtype.Int8, error) {
@@ -139,7 +152,6 @@ func (d *NullDecimal) ScanNumeric(v pgtype.Numeric) error {
 		dec.Compose(0, false, v.Int.Bytes(), v.Exp)
 	}
 	*d = NullDecimal(NullDecimal{Decimal: dec, Valid: true})
-	// *d = NullDecimal(dec)
 	return nil
 }
 
@@ -180,17 +192,18 @@ func (d *NullDecimal) ScanFloat64(v pgtype.Float8) error {
 		return fmt.Errorf("cannot scan %v into *decimal.NullDecimal", v.Float64)
 	}
 
-	*d = NullDecimal(NullDecimal{Decimal: decimal128.FromFloat64(v.Float64), Valid: true})
-
+	s := strconv.FormatFloat(v.Float64, 'f', -1, 64)
+	*d = NullDecimal(NullDecimal{Decimal: decimal128.MustParse(s), Valid: true})
 	return nil
+
 }
 
 func (d NullDecimal) Float64Value() (pgtype.Float8, error) {
 	if !d.Valid {
 		return pgtype.Float8{}, nil
 	}
-
 	dd := NullDecimal(d)
+
 	return pgtype.Float8{Float64: dd.Decimal.Float64(), Valid: true}, nil
 }
 
@@ -226,8 +239,8 @@ func TryWrapNumericEncodePlan(value interface{}) (plan pgtype.WrappedEncodePlanN
 	switch value := value.(type) {
 	case decimal128.Decimal:
 		return &wrapDecimalEncodePlan{}, Decimal(value), true
-		// case decimal128.NullDecimal:
-		// 	return &wrapNullDecimalEncodePlan{}, NullDecimal(value), true
+	case NullDecimal:
+		return &wrapNullDecimalEncodePlan{}, NullDecimal(value), true
 	}
 
 	return nil, nil, false
@@ -257,8 +270,8 @@ func TryWrapNumericScanPlan(target interface{}) (plan pgtype.WrappedScanPlanNext
 	switch target := target.(type) {
 	case *decimal128.Decimal:
 		return &wrapDecimalScanPlan{}, (*Decimal)(target), true
-		// case *decimal128.Decimal:
-		// 	return &wrapNullDecimalScanPlan{}, (*NullDecimal)(target), true
+	case *NullDecimal:
+		return &wrapNullDecimalScanPlan{}, (*NullDecimal)(target), true
 	}
 
 	return nil, nil, false
@@ -307,7 +320,7 @@ func (NumericCodec) DecodeValue(tm *pgtype.Map, oid uint32, format int16, src []
 	return target, nil
 }
 
-// Register registers the shopspring/decimal integration with a pgtype.ConnInfo.
+// Register registers the decimal integration with a pgtype.ConnInfo.
 func Register(m *pgtype.Map) {
 	m.TryWrapEncodePlanFuncs = append([]pgtype.TryWrapEncodePlanFunc{TryWrapNumericEncodePlan}, m.TryWrapEncodePlanFuncs...)
 	m.TryWrapScanPlanFuncs = append([]pgtype.TryWrapScanPlanFunc{TryWrapNumericScanPlan}, m.TryWrapScanPlanFuncs...)
@@ -341,7 +354,6 @@ func Register(m *pgtype.Map) {
 		m.RegisterDefaultPgType(reflect.New(sliceOfPointerType).Interface(), arrayName)
 	}
 
-	registerDefaultPgTypeVariants("numeric", "_numeric", decimal128.Decimal{})
 	registerDefaultPgTypeVariants("numeric", "_numeric", decimal128.Decimal{})
 	registerDefaultPgTypeVariants("numeric", "_numeric", Decimal{})
 	registerDefaultPgTypeVariants("numeric", "_numeric", NullDecimal{})
