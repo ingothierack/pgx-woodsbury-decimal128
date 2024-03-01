@@ -5,7 +5,7 @@ go 1.22
 toolchain go1.22.0
 
 require (
-	github.com/ingothierack/decimal128 v0.0.0-20240223142220-ee28767f4674
+	github.com/ingothierack/decimal128 v0.0.0-20240301062048-32025f06c5b5
 	github.com/jackc/pgx/v5 v5.5.3
 	github.com/stretchr/testify v1.8.4
 )
