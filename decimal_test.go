@@ -33,7 +33,7 @@ func init() {
 
 func TestCodecDecodeValue(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-		original := decimal128.MustParse("1.234")
+		original := decimal128.MustParse("1.2345678901234")
 
 		rows, err := conn.Query(context.Background(), `select $1::numeric`, original)
 		require.NoError(t, err)

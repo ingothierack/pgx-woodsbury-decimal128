@@ -13,36 +13,34 @@ import (
 
 type Decimal decimal128.Decimal
 
+const ErrScanNull = "cannot scan NULL into *decimal128.Decimal"
+const ErrScanNaN = "cannot scan NaN into *decimal128.Decimal"
+const ErrScanInf = "cannot scan %v into *decimal128.Decimal"
+
 func (d *Decimal) ScanNumeric(v pgtype.Numeric) error {
 	if !v.Valid {
-		return fmt.Errorf("cannot scan Null into *decimal128.Decimal")
+		return fmt.Errorf(ErrScanNull)
 	}
 
 	if v.NaN {
-		return fmt.Errorf("cannot scan NaN into *decimal128.Decimal")
+		return fmt.Errorf(ErrScanNaN)
 	}
 
 	if v.InfinityModifier != pgtype.Finite {
-		return fmt.Errorf("cannot scan %v into *decimal128.Decimal", v.InfinityModifier)
+		return fmt.Errorf(ErrScanInf, v.InfinityModifier)
 	}
 
 	if v.Int.BitLen() > 128 {
 		panic("bitlen outside of range")
 	}
 
-	dec := decimal128.Decimal{}
-
-	if v.Int.Sign() < 0 {
-		dec.Compose(0, true, v.Int.Bytes(), v.Exp)
-	} else {
-		dec.Compose(0, false, v.Int.Bytes(), v.Exp)
-	}
-
-	*d = Decimal(dec)
+	*d = Decimal(composeDecimal(v))
 
 	return nil
 }
 
+// description: This function returns the value of the Decimal type
+// return: pgtype.Numeric, error
 func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 	var nan bool
 	var inf pgtype.InfinityModifier
@@ -67,12 +65,9 @@ func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 		nan = false
 	}
 
-	z := new(big.Int)
+	z := new(big.Int).SetBytes(value)
 	if sign {
-		z.SetBytes(value)
 		z = z.Neg(z)
-	} else {
-		z.SetBytes(value)
 	}
 
 	return pgtype.Numeric{Int: z, Exp: exp, Valid: true, NaN: nan, InfinityModifier: inf}, nil
@@ -80,17 +75,20 @@ func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 
 func (d *Decimal) ScanFloat64(v pgtype.Float8) error {
 	if !v.Valid {
-		return fmt.Errorf("cannot scan NULL into *decimal.Decimal")
+		return fmt.Errorf(ErrScanNull)
 	}
 
-	if math.IsNaN(v.Float64) {
-		return fmt.Errorf("cannot scan NaN into *decimal.Decimal")
+	floatVal := v.Float64
+
+	if math.IsNaN(floatVal) {
+		return fmt.Errorf(ErrScanNaN)
 	}
 
-	if math.IsInf(v.Float64, 0) {
-		return fmt.Errorf("cannot scan %v into *decimal.Decimal", v.Float64)
+	if math.IsInf(floatVal, 0) {
+		return fmt.Errorf(ErrScanInf, floatVal)
 	}
-	s := strconv.FormatFloat(v.Float64, 'f', -1, 64)
+
+	s := strconv.FormatFloat(floatVal, 'f', -1, 64)
 	*d = Decimal(decimal128.MustParse(s))
 	return nil
 }
@@ -137,21 +135,14 @@ func (d *NullDecimal) ScanNumeric(v pgtype.Numeric) error {
 	}
 
 	if v.NaN {
-		return fmt.Errorf("cannot scan NaN into *decimal.NullDecimal")
+		return fmt.Errorf(ErrScanNaN)
 	}
 
 	if v.InfinityModifier != pgtype.Finite {
-		return fmt.Errorf("cannot scan %v into *decimal.NullDecimal", v.InfinityModifier)
+		return fmt.Errorf(ErrScanInf, v.InfinityModifier)
 	}
 
-	dec := decimal128.Decimal{}
-
-	if v.Int.Sign() < 0 {
-		dec.Compose(0, true, v.Int.Bytes(), v.Exp)
-	} else {
-		dec.Compose(0, false, v.Int.Bytes(), v.Exp)
-	}
-	*d = NullDecimal(NullDecimal{Decimal: dec, Valid: true})
+	*d = NullDecimal(NullDecimal{Decimal: composeDecimal(v), Valid: true})
 	return nil
 }
 
@@ -168,13 +159,11 @@ func (d NullDecimal) NumericValue() (pgtype.Numeric, error) {
 
 	_, sign, value, exp := dd.Decompose(buf)
 
-	z := new(big.Int)
+	z := new(big.Int).SetBytes(value)
 	if sign {
-		z.SetBytes(value)
 		z = z.Neg(z)
-	} else {
-		z.SetBytes(value)
 	}
+
 	return pgtype.Numeric{Int: z, Exp: exp, Valid: true}, nil
 }
 
@@ -185,11 +174,11 @@ func (d *NullDecimal) ScanFloat64(v pgtype.Float8) error {
 	}
 
 	if math.IsNaN(v.Float64) {
-		return fmt.Errorf("cannot scan NaN into *decimal.NullDecimal")
+		return fmt.Errorf(ErrScanNaN)
 	}
 
 	if math.IsInf(v.Float64, 0) {
-		return fmt.Errorf("cannot scan %v into *decimal.NullDecimal", v.Float64)
+		return fmt.Errorf(ErrScanInf, v.Float64)
 	}
 
 	s := strconv.FormatFloat(v.Float64, 'f', -1, 64)
@@ -357,4 +346,14 @@ func Register(m *pgtype.Map) {
 	registerDefaultPgTypeVariants("numeric", "_numeric", decimal128.Decimal{})
 	registerDefaultPgTypeVariants("numeric", "_numeric", Decimal{})
 	registerDefaultPgTypeVariants("numeric", "_numeric", NullDecimal{})
+}
+
+func composeDecimal(v pgtype.Numeric) decimal128.Decimal {
+	dec := decimal128.Decimal{}
+	if v.Int.Sign() < 0 {
+		dec.Compose(0, true, v.Int.Bytes(), v.Exp)
+	} else {
+		dec.Compose(0, false, v.Int.Bytes(), v.Exp)
+	}
+	return dec
 }
