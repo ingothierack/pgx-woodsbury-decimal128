@@ -6,7 +6,7 @@ toolchain go1.22.0
 
 require (
 	github.com/ingothierack/decimal128 v0.0.0-20240312123315-2af3b94c1152
-	github.com/jackc/pgx/v5 v5.5.5
+	github.com/jackc/pgx/v5 v5.6.0
 	github.com/stretchr/testify v1.8.4
 )
 
