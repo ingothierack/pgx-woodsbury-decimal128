@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"reflect"
 	"strconv"
+	"sync"
 
 	"github.com/ingothierack/decimal128"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,13 +18,26 @@ const ErrScanNull = "cannot scan NULL into *decimal128.Decimal"
 const ErrScanNaN = "cannot scan NaN into *decimal128.Decimal"
 const ErrScanInf = "cannot scan %v into *decimal128.Decimal"
 
+// Predeclare common errors
+var (
+	errScanNull = fmt.Errorf(ErrScanNull)
+	errScanNaN  = fmt.Errorf(ErrScanNaN)
+)
+
+// Use a sync.Pool for buffers
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1024)
+	},
+}
+
 func (d *Decimal) ScanNumeric(v pgtype.Numeric) error {
 	if !v.Valid {
-		return fmt.Errorf(ErrScanNull)
+		return errScanNull
 	}
 
 	if v.NaN {
-		return fmt.Errorf(ErrScanNaN)
+		return errScanNaN
 	}
 
 	if v.InfinityModifier != pgtype.Finite {
@@ -42,7 +56,6 @@ func (d *Decimal) ScanNumeric(v pgtype.Numeric) error {
 // description: This function returns the value of the Decimal type
 // return: pgtype.Numeric, error
 func (d Decimal) NumericValue() (pgtype.Numeric, error) {
-	var nan bool
 	var inf pgtype.InfinityModifier
 
 	dd := decimal128.Decimal(d)
@@ -51,18 +64,14 @@ func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 	switch modifier {
 	case 0:
 		inf = pgtype.Finite
-		nan = false
 	case 1:
 		inf = pgtype.Infinity
-		nan = false
 	case 2:
 		if sign {
 			inf = pgtype.NegativeInfinity
 		}
-		nan = false
 	default:
 		inf = pgtype.Finite
-		nan = false
 	}
 
 	z := new(big.Int).SetBytes(value)
@@ -70,18 +79,18 @@ func (d Decimal) NumericValue() (pgtype.Numeric, error) {
 		z = z.Neg(z)
 	}
 
-	return pgtype.Numeric{Int: z, Exp: exp, Valid: true, NaN: nan, InfinityModifier: inf}, nil
+	return pgtype.Numeric{Int: z, Exp: exp, Valid: true, NaN: false, InfinityModifier: inf}, nil
 }
 
 func (d *Decimal) ScanFloat64(v pgtype.Float8) error {
 	if !v.Valid {
-		return fmt.Errorf(ErrScanNull)
+		return errScanNull
 	}
 
 	floatVal := v.Float64
 
 	if math.IsNaN(floatVal) {
-		return fmt.Errorf(ErrScanNaN)
+		return errScanNaN
 	}
 
 	if math.IsInf(floatVal, 0) {
@@ -142,7 +151,7 @@ func (d *NullDecimal) ScanNumeric(v pgtype.Numeric) error {
 		return fmt.Errorf(ErrScanInf, v.InfinityModifier)
 	}
 
-	*d = NullDecimal(NullDecimal{Decimal: composeDecimal(v), Valid: true})
+	*d = NullDecimal{Decimal: composeDecimal(v), Valid: true}
 	return nil
 }
 
@@ -155,7 +164,8 @@ func (d NullDecimal) NumericValue() (pgtype.Numeric, error) {
 	if dd.IsNaN() {
 		return pgtype.Numeric{}, nil
 	}
-	buf := make([]byte, 1024)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 
 	_, sign, value, exp := dd.Decompose(buf)
 
@@ -174,7 +184,7 @@ func (d *NullDecimal) ScanFloat64(v pgtype.Float8) error {
 	}
 
 	if math.IsNaN(v.Float64) {
-		return fmt.Errorf(ErrScanNaN)
+		return errScanNaN
 	}
 
 	if math.IsInf(v.Float64, 0) {
@@ -182,7 +192,7 @@ func (d *NullDecimal) ScanFloat64(v pgtype.Float8) error {
 	}
 
 	s := strconv.FormatFloat(v.Float64, 'f', -1, 64)
-	*d = NullDecimal(NullDecimal{Decimal: decimal128.MustParse(s), Valid: true})
+	*d = NullDecimal{Decimal: decimal128.MustParse(s), Valid: true}
 	return nil
 
 }
@@ -191,9 +201,9 @@ func (d NullDecimal) Float64Value() (pgtype.Float8, error) {
 	if !d.Valid {
 		return pgtype.Float8{}, nil
 	}
-	dd := NullDecimal(d)
+	dd := d.Decimal
 
-	return pgtype.Float8{Float64: dd.Decimal.Float64(), Valid: true}, nil
+	return pgtype.Float8{Float64: dd.Float64(), Valid: true}, nil
 }
 
 func (d *NullDecimal) ScanInt64(v pgtype.Int8) error {
@@ -202,7 +212,7 @@ func (d *NullDecimal) ScanInt64(v pgtype.Int8) error {
 		return nil
 	}
 
-	*d = NullDecimal(NullDecimal{Decimal: decimal128.FromInt64(v.Int64), Valid: true})
+	*d = NullDecimal{Decimal: decimal128.FromInt64(v.Int64), Valid: true}
 
 	return nil
 }
@@ -216,7 +226,7 @@ func (d NullDecimal) Int64Value() (pgtype.Int8, error) {
 		return pgtype.Int8{}, nil
 	}
 
-	bi := NullDecimal(d).Decimal.Int(nil)
+	bi := d.Decimal.Int(nil)
 	if !bi.IsInt64() {
 		return pgtype.Int8{}, fmt.Errorf("cannot convert %v to int64", d)
 	}
