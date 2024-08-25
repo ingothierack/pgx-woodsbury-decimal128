@@ -4,6 +4,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ingothierack/decimal128 v0.0.0-20240312123315-2af3b94c1152 h1:C5Deqx1WW1Yv+vWH3Q02ld8XMRM4FGEKM37J8jrzuRo=
 github.com/ingothierack/decimal128 v0.0.0-20240312123315-2af3b94c1152/go.mod h1:xWVaXGS78YbR7SttPGTWjeuRAWHk2IPe/6o4JmLCLGU=
+github.com/ingothierack/decimal128 v0.0.0-20240825142058-8b6a4752574a h1:Oh4tT+BCKnSnk/OHK8aGzwDp0c2HUGJYkf4mIP818PY=
+github.com/ingothierack/decimal128 v0.0.0-20240825142058-8b6a4752574a/go.mod h1:g6baIvYHho1yVRaIngoQNqGxaQolSY9iN1RNvihr9ZY=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a h1:bbPeKD0xmW/Y25WS6cokEszi5g+S0QxI/d45PkRi7Nk=
