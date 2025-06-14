@@ -26,7 +26,7 @@ var (
 
 // Use a sync.Pool for buffers
 var bufPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 1024)
 	},
 }
@@ -234,7 +234,7 @@ func (d NullDecimal) Int64Value() (pgtype.Int8, error) {
 	return pgtype.Int8{Int64: bi.Int64(), Valid: true}, nil
 }
 
-func TryWrapNumericEncodePlan(value interface{}) (plan pgtype.WrappedEncodePlanNextSetter, nextValue interface{}, ok bool) {
+func TryWrapNumericEncodePlan(value any) (plan pgtype.WrappedEncodePlanNextSetter, nextValue any, ok bool) {
 	switch value := value.(type) {
 	case decimal128.Decimal:
 		return &wrapDecimalEncodePlan{}, Decimal(value), true
@@ -249,9 +249,11 @@ type wrapDecimalEncodePlan struct {
 	next pgtype.EncodePlan
 }
 
-func (plan *wrapDecimalEncodePlan) SetNext(next pgtype.EncodePlan) { plan.next = next }
+func (plan *wrapDecimalEncodePlan) SetNext(next pgtype.EncodePlan) {
+	plan.next = next
+}
 
-func (plan *wrapDecimalEncodePlan) Encode(value interface{}, buf []byte) (newBuf []byte, err error) {
+func (plan *wrapDecimalEncodePlan) Encode(value any, buf []byte) (newBuf []byte, err error) {
 	return plan.next.Encode(Decimal(value.(decimal128.Decimal)), buf)
 }
 
@@ -259,13 +261,15 @@ type wrapNullDecimalEncodePlan struct {
 	next pgtype.EncodePlan
 }
 
-func (plan *wrapNullDecimalEncodePlan) SetNext(next pgtype.EncodePlan) { plan.next = next }
+func (plan *wrapNullDecimalEncodePlan) SetNext(next pgtype.EncodePlan) {
+	plan.next = next
+}
 
-func (plan *wrapNullDecimalEncodePlan) Encode(value interface{}, buf []byte) (newBuf []byte, err error) {
+func (plan *wrapNullDecimalEncodePlan) Encode(value any, buf []byte) (newBuf []byte, err error) {
 	return plan.next.Encode(NullDecimal(value.(NullDecimal)), buf)
 }
 
-func TryWrapNumericScanPlan(target interface{}) (plan pgtype.WrappedScanPlanNextSetter, nextDst interface{}, ok bool) {
+func TryWrapNumericScanPlan(target any) (plan pgtype.WrappedScanPlanNextSetter, nextDst any, ok bool) {
 	switch target := target.(type) {
 	case *decimal128.Decimal:
 		return &wrapDecimalScanPlan{}, (*Decimal)(target), true
@@ -282,7 +286,7 @@ type wrapDecimalScanPlan struct {
 
 func (plan *wrapDecimalScanPlan) SetNext(next pgtype.ScanPlan) { plan.next = next }
 
-func (plan *wrapDecimalScanPlan) Scan(src []byte, dst interface{}) error {
+func (plan *wrapDecimalScanPlan) Scan(src []byte, dst any) error {
 	return plan.next.Scan(src, (*Decimal)(dst.(*decimal128.Decimal)))
 }
 
@@ -290,9 +294,11 @@ type wrapNullDecimalScanPlan struct {
 	next pgtype.ScanPlan
 }
 
-func (plan *wrapNullDecimalScanPlan) SetNext(next pgtype.ScanPlan) { plan.next = next }
+func (plan *wrapNullDecimalScanPlan) SetNext(next pgtype.ScanPlan) {
+	plan.next = next
+}
 
-func (plan *wrapNullDecimalScanPlan) Scan(src []byte, dst interface{}) error {
+func (plan *wrapNullDecimalScanPlan) Scan(src []byte, dst any) error {
 	return plan.next.Scan(src, (*NullDecimal)(dst.(*NullDecimal)))
 }
 
@@ -300,7 +306,7 @@ type NumericCodec struct {
 	pgtype.NumericCodec
 }
 
-func (NumericCodec) DecodeValue(tm *pgtype.Map, oid uint32, format int16, src []byte) (interface{}, error) {
+func (NumericCodec) DecodeValue(tm *pgtype.Map, oid uint32, format int16, src []byte) (any, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -330,7 +336,7 @@ func Register(m *pgtype.Map) {
 		Codec: NumericCodec{},
 	})
 
-	registerDefaultPgTypeVariants := func(name, arrayName string, value interface{}) {
+	registerDefaultPgTypeVariants := func(name, arrayName string, value any) {
 		// T
 		m.RegisterDefaultPgType(value, name)
 

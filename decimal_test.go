@@ -69,7 +69,7 @@ func TestNaN(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		var d decimal128.Decimal
 		err := conn.QueryRow(context.Background(), `select 'NaN'::numeric`).Scan(&d)
-		require.EqualError(t, err, `can't scan into dest[0]: cannot scan NaN into *decimal128.Decimal`)
+		require.EqualError(t, err, `can't scan into dest[0] (col: numeric): cannot scan NaN into *decimal128.Decimal`)
 	})
 }
 
@@ -77,7 +77,7 @@ func TestArray(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		inputSlice := []decimal128.Decimal{}
 
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			d := decimal128.FromInt64(int64(i))
 			inputSlice = append(inputSlice, d)
 		}
@@ -87,20 +87,20 @@ func TestArray(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, len(inputSlice), len(outputSlice))
-		for i := 0; i < len(inputSlice); i++ {
+		for i := range len(inputSlice) {
 			require.True(t, outputSlice[i].Equal(inputSlice[i]))
 		}
 	})
 }
 
-func isExpectedEqDecimal(a decimal128.Decimal) func(interface{}) bool {
-	return func(v interface{}) bool {
+func isExpectedEqDecimal(a decimal128.Decimal) func(any) bool {
+	return func(v any) bool {
 		return a.Equal(v.(decimal128.Decimal))
 	}
 }
 
-func isExpectedEqString(a string) func(interface{}) bool {
-	return func(v interface{}) bool {
+func isExpectedEqString(a string) func(any) bool {
+	return func(v any) bool {
 		val := v.(decimal128.Decimal).String()
 		ret := strings.Compare(a, val)
 		if ret == 0 {
@@ -110,8 +110,8 @@ func isExpectedEqString(a string) func(interface{}) bool {
 	}
 }
 
-func isExpectedEqNullDecimal(a pgxdecimal.NullDecimal) func(interface{}) bool {
-	return func(v interface{}) bool {
+func isExpectedEqNullDecimal(a pgxdecimal.NullDecimal) func(any) bool {
+	return func(v any) bool {
 		b := v.(pgxdecimal.NullDecimal)
 		return a.Valid == b.Valid && a.Decimal.Equal(b.Decimal)
 	}
