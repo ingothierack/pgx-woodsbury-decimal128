@@ -1,12 +1,12 @@
 module github.com/ingothierack/pgx-woodsbury-decimal128
 
-go 1.24.0
+go 1.25.0
 
-toolchain go1.24.4
+toolchain go1.25.1
 
 require (
-	github.com/ingothierack/decimal128 v1.4.0-custom.1
-	github.com/jackc/pgx/v5 v5.7.5
+	github.com/ingothierack/decimal128 v1.4.1-custom
+	github.com/jackc/pgx/v5 v5.7.6
 	github.com/stretchr/testify v1.8.4
 )
 
